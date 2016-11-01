@@ -1,4 +1,4 @@
-#include <ESP8266WiFi.h>
+  #include <ESP8266WiFi.h>
 #include <WiFiClient.h> 
 #include <ESP8266WebServer.h>
 
@@ -14,36 +14,38 @@ char *ssid2 = "AndroidAP";
 char *password2 = "pasaport";
 
 int coupled = 0;  //Boolean
-ESP8266WebServer server(80);
+const char* version = "V1";
+const char* serverIndex = "<form method='POST' action='/updateDevice' enctype='multipart/form-data'><input type='file' name='update'><input type='submit' value='Update'></form>";
 
+ESP8266WebServer server(80);
 /* Just a little test message.  Go to http://192.168.4.1 in a web browser
  * connected to this access point to see it.
  */
 
-void readSetValues(){
-  bool result = SPIFFS.begin();
-  Serial.println("SPIFFS opened: " + result);
-  File f = SPIFFS.open("/f.txt", "r");  
-  if (!f) {
-    Serial.println("File doesn't exist yet. Creating it");
-    // open the file in write mode
-    File f = SPIFFS.open("/f.txt", "w");
-    if (!f) {
-      Serial.println("file creation failed");
-    }
-    // now write two lines in key/value style with  end-of-line characters
-    f.println("")
-    
-  }else {
-    while(f.available()) {
-      String line = f.readStringUntil('n');
-      Serial.println(line);
-   }
-    Serial.println("scan start");
-
-  }
-  f.close();
-}
+//void readSetValues(){
+//  bool result = SPIFFS.begin();
+//  Serial.println("SPIFFS opened: " + result);
+//  File f = SPIFFS.open("/f.txt", "r");  
+//  if (!f) {
+//    Serial.println("File doesn't exist yet. Creating it");
+//    // open the file in write mode
+//    File f = SPIFFS.open("/f.txt", "w");
+//    if (!f) {
+//      Serial.println("file creation failed");
+//    }
+//    // now write two lines in key/value style with  end-of-line characters
+//    f.println("")
+//    
+//  }else {
+//    while(f.available()) {
+//      String line = f.readStringUntil('n');
+//      Serial.println(line);
+//   }
+//    Serial.println("scan start");
+//
+//  }
+//  f.close();
+//}
 
 void turnVibrationOn(){
   digitalWrite(pin1, HIGH); 
@@ -76,9 +78,11 @@ void connectWifi(){
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 }
-
+void handleUpdatePage(){
+  server.send(200, "text/html", serverIndex);
+  }
 void couple() {
-  server.send(200, "text/json", "{\"deviceId\":\""+uuid+"\", \"key\":\""+key+"\"}");
+  server.send(200, "text/json", "{\"deviceId\":\""+uuid+"\", \"key\":\""+key+"\", \"version\":\""+version+"\"}");
   WiFi.softAPdisconnect(true);
   delay(1000);//15 secs to stop connection!!!!!!!!!!!!!!#@#$
   connectWifi();  
@@ -161,7 +165,39 @@ void setup() {
     server.on("/off", handleOff);
     server.on("/couple", couple);
     server.on("/password", changePassword);
-    
+    server.on("/update", handleUpdatePage);
+    server.on("/updateDevice", HTTP_POST, [](){
+      server.sendHeader("Access-Control-Allow-Origin", "*");
+      server.send(200, "text/plain", (Update.hasError())?"FAIL":"OK");
+      ESP.restart();
+    },[](){
+      HTTPUpload& upload = server.upload();
+      Serial.println(upload.totalSize);
+      if(upload.status == UPLOAD_FILE_START){
+        Serial.setDebugOutput("UPLOAD_FILE_START");
+        Serial.setDebugOutput(true);
+//        WiFiUDP::stopAll();
+        Serial.printf("Update: %s\n", upload.filename.c_str());
+        uint32_t maxSketchSpace = (ESP.getFreeSketchSpace() - 0x1000) & 0xFFFFF000;
+        if(!Update.begin(maxSketchSpace)){//start with max available size
+          Update.printError(Serial);
+        }
+      } else if(upload.status == UPLOAD_FILE_WRITE){
+        Serial.setDebugOutput("UPLOAD_FILE_WRITE");
+        if(Update.write(upload.buf, upload.currentSize) != upload.currentSize){
+          Update.printError(Serial);
+        }
+      } else if(upload.status == UPLOAD_FILE_END){
+        Serial.setDebugOutput("UPLOAD_FILE_END");
+        if(Update.end(true)){ //true to set the size to the current progress
+          Serial.printf("Update Success: %u\nRebooting...\n", upload.totalSize);
+        } else {
+          Update.printError(Serial);
+        }
+        Serial.setDebugOutput(false);
+      }
+      yield();
+    });
     server.begin();
     Serial.println("HTTP server started");
   }
@@ -174,6 +210,7 @@ void setup() {
 void loop() {
   if(coupled == 0){
 	  server.handleClient();
+    delay(10);
   }
   if(coupled == 1){
     delay(5000);
